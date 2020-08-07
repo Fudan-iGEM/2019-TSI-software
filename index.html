@@ -1,0 +1,550 @@
+
+<!doctype html>
+<!-- based on tRNA_primer.py3 -->
+<!-- 2019-10-15 LC
+RNA thermodynamic properties were taken from Xia T., SantaLucia J., Burkard M.E., Kierzek R., Schroeder S.J., Jiao X., Cox C., Turner D.H. (1998) Biochemistry 37:14719-14735.
+
+J Gen Physiol. 1961 Nov;45:355-69.
+Cation transport in Escherichia coli. I. Intracellular Na and K concentrations and net cation movement.
+SCHULTZ SG, SOLOMON AK.
+Figure 2, ~15 hr 67 mM (outside 120 mM, rise from 5 mM and take about 32 hr)
+	-->
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+  <title>tRNA primer &copy; Team: Fudan-TSI 2019</title>
+  <style type="text/css" media="screen"><!--
+    body{margin:25px;padding:0;font-family:Arial,Helvetica,sans-serif;font-size:100%;line-height:1.5}
+    h1,h2,h3,h4{margin:1em 0 .5em;line-height:1.25;font-weight:700}
+    h1{font-size:2em}
+    h2{font-size:1.5em}
+    h3{font-size:1.2em}
+    h4{font-size:1em}
+    p{margin:1em 0}
+    sub,sup{line-height:0}
+    table{border-collapse:collapse}
+    tr:nth-child(2n){background-color:#f9f9f9}
+    td,th{padding:2px 10px;font-family:"Courier New",Courier,monospace;font-size:0.8em}
+    th,td.doench,td.hsu,td.pampn{text-align:center}
+    td:first-child,th:first-child{empty-cells:hide}
+    .note{font-size:0.8em;padding-left:5px}
+    .Off{display:none !important}
+  --></style>
+</head>
+<body>
+  <h1>tRNA primer<sup style="color:purple">&nbsp;&copy; Huang Yuchao</sup></h1>
+  <p id="p_rev">
+    <em>Please input the type of reverse transcriptase (RT) that you want to use:</em><br/>
+    <input type="radio" name="rev" value="MMLV" id="rev_MMLV" checked /><label for="rev_MMLV">MMLV</label><br/>
+    <input type="radio" name="rev" value="HIV1" id="rev_HIV1" /><label for="rev_HIV1">HIV1</label><br/>
+    <input type="radio" name="rev" value="RSV" id="rev_RSV" /><label for="rev_RSV">RSV</label>
+  </p>
+  <p id="p_target">
+    <em>Please input a sequence that you want to mutate:</em><br/>
+    <textarea style="width:80%;resize:none;border:0;border-bottom:1px #ccc solid;" rows="2" id="target_seq"></textarea>
+  </p>
+  <p>
+    <input type="submit" value="submit" id="submit" />
+    <input type="submit" value="clear" id="clear" />
+    <input type="submit" value="demo" id="demo" style="float:right" />
+  </p>
+  <p id="progress" style="background:yellow;font-size:0.75em;line-height:11pt;text-indent:-10px;padding-left:15px"></p>
+  <div><table id="table_result" style="background-color:#eee"></table></div>
+  <div id="graph_result"></div>
+  <hr/>
+  <p id="p_primer" style="color:green" class="Off">
+    <em>Your tRNA primer (complement to <u>Your tRNA</u>):</em><br/>
+    3'-<span id="primer_seq"></span>-5'
+  </p>
+
+  <script src="jquery-1.11.3.min.js"></script>
+  <script>
+var DEBUG = false,
+    PBS_len = 18;
+
+function getQueryStringArgs() {
+  var qs = location.search.length > 0 ? location.search.substring(1) : '',
+      args = {},
+      items = qs.length ? qs.split('&') : [],
+      item = null,
+      name = null,
+      value = null,
+      i = 0,
+      len = items.length;
+  for (i = 0; i < len; i += 1) {
+    item = items[i].split('=');
+    name = decodeURIComponent(item[0]);
+    value = decodeURIComponent(item[1]);
+    if (name.length) {
+      args[name] = value;
+    }
+  }
+  return args;
+}
+
+function cumsum(myarray) {
+  var new_array = [];
+  myarray.reduce(function(a,b,i) { return new_array[i] = a+b; }, 0);
+  return new_array;
+}
+
+function complement(ele) {
+    if (ele === 'A') {
+      return 'U';
+    } else if (ele === 'U' || ele === 'T') {
+      return 'A';
+    } else if (ele === 'G') {
+      return 'C';
+    } else if (ele === 'C') {
+      return 'G';
+    }
+  return 'N';
+}
+function complement_dna(ele) {
+    if (ele === 'A') {
+      return 'T';
+    } else if (ele === 'T' || ele === 'U') {
+      return 'A';
+    } else if (ele === 'G') {
+      return 'C';
+    } else if (ele === 'C') {
+      return 'G';
+    }
+  return 'N';
+}
+
+function isComplement(Base1, Base2, drawMode, alignMode) {
+  if (!drawMode) { drawMode = 'none'; }
+  if (!alignMode) { alignMode = 'none'; }
+  if (Base1 == complement(Base2)) {
+    if (alignMode === 'vertical') {
+      return 3;
+    } else {
+      return 1;
+    }
+  } else if ( (Base1 === 'G' && Base2 === 'U') ||
+              (Base1 === 'U' && Base2 === 'G') ) {
+    if (drawMode === 'draw') {
+      return 2;
+    } else {
+      return 1;
+    }
+  } else {
+    return 0;
+  }      
+}
+
+function anti_parallel(t) {
+  var apt_list = [],
+      t_list = t.split('');
+  $.each(t_list, function (iV, ele) {
+    if (ele === 'A') {
+      apt_list.unshift( 'U' );
+    } else if (ele === 'T' || ele === 'U') {
+      apt_list.unshift( 'A' );
+    } else if (ele === 'G') {
+      apt_list.unshift( 'C' );
+    } else if (ele === 'C') {
+      apt_list.unshift( 'G' );
+    }
+  });
+  return apt_list.join('');
+}
+
+function complementSeq(t) {
+  var cs_list = [],
+      t_list = t.split('');
+  $.each(t_list, function (iV, ele) {
+    cs_list.push( complement(ele) );
+  });
+  return cs_list.join('');
+}
+function complementSeq_dna(t) {
+  var cs_list = [],
+      t_list = t.split('');
+  $.each(t_list, function (iV, ele) {
+    cs_list.push( complement_dna(ele) );
+  });
+  return cs_list.join('');
+}
+
+function reverseAB(t, A, B) {
+  if (A <= B || A >= t.length) { return ''; }
+  var tt = '';
+  for (let step = A; step > B; step--) {
+      tt += t.substr(step, 1);
+  }
+  return tt;
+}
+
+function findRegion(seq, L) {
+  var new_s = {},
+      Max_Mismatch = 2;
+  // return the basic components of tRNA (e.g. TArm, TLoop, etc.) for subsequent plotting step
+  var S, Base1, Base2, mismatch1, mismatch2, mismatch3, MisMatch_total,
+      AcptStemStart, AcptStemEnd, AcptStemLen,
+      DLoopStart, DLoopEnd, DLoopLen,
+      AtCLoopEnd, AtCLoopStart, AtCLoopStemLen,
+      TArmSiteStart, TArmSiteEnd, TArmStemLen;
+  for (let n = 0; n < L; n++) {
+    for (let interval = 69; interval < 94; interval++) {
+            AcptStemStart = n;
+            AcptStemEnd = n + interval;
+            AcptStemLen = 7;
+            MisMatch_total = 0;
+            if (AcptStemEnd >= L) { continue; }
+            mismatch1 = 0;
+            S = 0;
+            for (let i = 0; i < AcptStemLen; i++) {
+                Base1 = seq.substr(AcptStemStart+i, 1);
+                Base2 = seq.substr(AcptStemEnd-i, 1);
+                S += isComplement(Base1, Base2);
+            }
+            mismatch1 += (AcptStemLen - S);
+            if (S < AcptStemLen-Max_Mismatch || mismatch1 > Max_Mismatch) { continue; }
+            TArmSiteEnd = n + interval - AcptStemLen;
+            TArmSiteStart = TArmSiteEnd - 16;
+            TArmStemLen = 5;
+            S = 0;
+            for (let i = 0; i < TArmStemLen; i++) {
+                Base1 = seq.substr(TArmSiteStart+i, 1);
+                Base2 = seq.substr(TArmSiteEnd-i, 1);
+                S += isComplement(Base1, Base2);
+            }
+            mismatch1 += (TArmStemLen - S);
+            MisMatch_total = mismatch1;
+            if (S < 4 || MisMatch_total > Max_Mismatch) { continue; }
+            for (let DLoopLen = 14; DLoopLen < 19; DLoopLen++) {
+                MisMatch_total = mismatch1;
+                DLoopStart = n + 9;
+                DLoopEnd = DLoopStart + DLoopLen;
+                S = 0;
+                if (DLoopLen < 17) { DLoopStemLen = 3; }
+                else { DLoopStemLen = 4; }
+                for (let i = 0; i < DLoopStemLen; i++) {
+                    Base1 = seq.substr(DLoopStart+i, 1);
+                    Base2 = seq.substr(DLoopEnd-i, 1);
+                    S += isComplement(Base1, Base2);
+                }
+                mismatch2 = DLoopStemLen - S;
+                MisMatch_total += mismatch2;
+                if (MisMatch_total <= Max_Mismatch) {
+                    AtCLoopStart = DLoopEnd + 2;
+                    AtCLoopStemLen = 5;
+                    for (let AtCLoopEnd = Math.max(AtCLoopStart+16, AcptStemEnd-54);
+                         AtCLoopEnd <= Math.min(AtCLoopStart+16, AcptStemEnd-28); AtCLoopEnd++) {
+                        S = 0;
+                        MisMatch_total = mismatch1 + mismatch2;
+                        for (let i = 0; i < AtCLoopStemLen; i++) {
+                            Base1 = seq.substr(AtCLoopStart+i, 1);
+                            Base2 = seq.substr(AtCLoopEnd-i, 1);
+                            S += isComplement(Base1, Base2);
+                        }
+                        mismatch3 = AtCLoopStemLen - S;
+                        MisMatch_total += mismatch3;
+                        if (MisMatch_total <= Max_Mismatch) {
+                            $('#progress').append('<br/>'+(AcptStemStart+1)+'..'+(AcptStemEnd+1+1)+'&nbsp;&nbsp;&nbsp;&nbsp;');
+                            $('#progress').append('mismatch='+MisMatch_total);
+                            GroupNum = [AcptStemStart, AcptStemLen, 2, 4, DLoopLen-2*4+1, 4, 1, AtCLoopStemLen,
+                                        AtCLoopEnd-AtCLoopStart-2*AtCLoopStemLen+1, AtCLoopStemLen,
+                                        TArmSiteStart-AtCLoopEnd-1, TArmStemLen, 16-2*TArmStemLen+1,
+                                        TArmStemLen, AcptStemLen, seq.length-AcptStemLen];
+                            GroupNum = cumsum(GroupNum);
+                            new_s = {
+                                AcceptArm: '',
+                                Interval1: '',
+                                DArm: '',
+                                DLoop: '',
+                                DArmComp: '',
+                                Interval2: '',
+                                AnticodonArm: '',
+                                AnticodonLoop: '',
+                                AnticodonArmComp: '',
+                                VariableLoop: '',
+                                TArm: '',
+                                TLoop: '',
+                                TArmComp: '',
+                                AcceptArmComp: '',
+                                Redundance:''
+                            };
+                            OutputName = [
+                                'AcceptArm',
+                                'Interval1',
+                                'DArm',
+                                'DLoop',
+                                'DArmComp',
+                                'Interval2',
+                                'AnticodonArm',
+                                'AnticodonLoop',
+                                'AnticodonArmComp',
+                                'VariableLoop',
+                                'TArm',
+                                'TLoop',
+                                'TArmComp',
+                                'AcceptArmComp',
+                                'Redundance'
+                            ];
+                            for (let i  = AcptStemStart; i < L; i++) {
+                                for (let j = 0; j < 15; j++) {
+                                    if (i >= GroupNum[j] && i < GroupNum[j+1]) {
+                                        new_s[OutputName[j]] += seq.substr(i, 1);
+                                    }
+                                }
+                            }
+                            DEBUG && console.log(new_s);
+                            return new_s;
+                        }
+                    } // for AtCLoopEnd
+                }
+            } // for DLoopLen
+    } // for interval
+  } // for n
+  $('#progress').append('<br/>!! not a tRNA, failed to draw');
+  return new_s;
+}
+
+function linkerDtm(seq1, seq2, mode) {
+  var linkSymbol = [' ', '-', '+', '|'],
+      L1 = seq1.length,
+      L2 = seq2.length, L, linkerSeq = '';
+  if (L1 != L2) {
+    return 0;
+  } else {
+    L = L1;
+  }
+  for (let i = 0; i < L; i++){
+    Base1 = seq1.substr(i, 1);
+    Base2 = seq2.substr(L-1-i, 1);
+    linkerSeq += linkSymbol[ isComplement(Base1, Base2, 'draw', mode) ];
+  }   
+  return linkerSeq;
+}
+
+function TmCal67(seq) {
+  /* Tm= (wA+xT)*2 + (yG+zC)*4 - 16.6*log10(0.050) + 16.6*log10([Na+])
+       return 58.1+(58.4*c/a)+(11.8*(c/a)*(c/a))-(820/a)
+     Tm= (wA+xT)*2 + (yG+zC)*4 +21.597-19.487
+       return b*2+c*4+2.11 */
+  if (!seq) { return 0; }
+  var a = seq.length, b, c;
+  b = (seq.split('A').length - 1) + (seq.split('U').length - 1);
+  c = (seq.split('G').length - 1) + (seq.split('C').length - 1);
+  return b*2+c*4+2.1
+}
+
+function draw_tRNA(ForDraw, Type_RT, preId) {
+    var linker = {}, pre;
+    if (ForDraw.DLoop.length < 9) {
+        for (let i = 0; i < (9 - ForDraw.DLoop.length); i++) {
+          ForDraw.DLoop += ' ';
+        }
+    }
+    linker['AcceptorArmLink'] = linkerDtm(ForDraw.AcceptArm, ForDraw.AcceptArmComp)
+    linker['DArmLink'] = linkerDtm(ForDraw.DArmComp,ForDraw.DArm, 'vertical')
+    linker['AnticodonArmLink'] = linkerDtm(ForDraw.AnticodonArm, ForDraw.AnticodonArmComp)
+    linker['TArmLink'] = linkerDtm(ForDraw.TArm, ForDraw.TArmComp, 'vertical')
+    pre = '                        ' + ForDraw.Redundance + '-3\n';
+    pre += '                 5-' + ForDraw.AcceptArm[0] +
+           ' ' + linker.AcceptorArmLink[0] + ' ' +
+           ForDraw.AcceptArmComp[ForDraw.AcceptArm.length-1]+'\n';
+    for (let i = 1; i < ForDraw.AcceptArm.length-1; i++) {
+        pre += '                   ' + ForDraw.AcceptArm[i] +
+               ' ' + linker.AcceptorArmLink[i] + ' ' +
+               ForDraw.AcceptArmComp[ForDraw.AcceptArm.length-1-i]+'\n';
+    }
+    pre += '                   ' + ForDraw.AcceptArm[ForDraw.AcceptArm.length-1] +
+           ' ' + linker.AcceptorArmLink[ForDraw.AcceptArm.length-1] +
+           ' ' + ForDraw.AcceptArmComp[0] +
+           '          ' + ForDraw.TLoop[6] + ' ' + ForDraw.TLoop[5]+'\n';
+    pre += '                  ' + ForDraw.Interval1[0] + '     ' +
+           ForDraw.TArmComp[4] + ' ' +
+           ForDraw.TArmComp[3] + ' ' +
+           ForDraw.TArmComp[2] + ' ' +
+           ForDraw.TArmComp[1] + ' ' +
+           ForDraw.TArmComp[0] + '     ' + ForDraw.TLoop[4]+'\n';
+    pre += '      ' + ForDraw.DLoop[1] + ' ' + ForDraw.DLoop[0] +
+           '        ' + ForDraw.Interval1[1] +
+           '      ' + linker.TArmLink[0] + ' ' +
+           linker.TArmLink[1] + ' ' +
+           linker.TArmLink[2] + ' ' +
+           linker.TArmLink[3] + ' ' +
+           linker.TArmLink[4] + '     ' + ForDraw.TLoop[3]+'\n';
+    pre += '    ' + ForDraw.DLoop[2] + '     ' +
+           ForDraw.DArm[3] + ' ' +
+           ForDraw.DArm[2] + ' ' +
+           ForDraw.DArm[1] + ' ' +
+           ForDraw.DArm[0] + '       ' +
+           ForDraw.TArm[0] + ' ' +
+           ForDraw.TArm[1] + ' ' +
+           ForDraw.TArm[2] + ' ' +
+           ForDraw.TArm[3] + ' ' +
+           ForDraw.TArm[4] + '     ' + ForDraw.TLoop[2]+'\n';
+    pre += '    ' + ForDraw.DLoop[3] + '     ' +
+           linker.DArmLink[0] + ' ' +
+           linker.DArmLink[1] + ' ' +
+           linker.DArmLink[2] + ' ' +
+           linker.DArmLink[3] + '        ' +
+           ForDraw.VariableLoop[4] + '        ' +
+           ForDraw.TLoop[1] + ' ' + ForDraw.TLoop[0]+'\n';
+    if (Type_RT === 'HIV1') {
+	    pre += '    ' + ForDraw.DLoop[4] + '     ' +
+	           ForDraw.DArmComp[0] + ' ' +
+	           ForDraw.DArmComp[1] + ' ' +
+	           ForDraw.DArmComp[2] + ' ' +
+	           ForDraw.DArmComp[3] + '         ' +
+	           ForDraw.VariableLoop[4] + '  \n';
+	    pre += '      ' + ForDraw.DLoop[6] + ' ' + ForDraw.DLoop[7] +
+	           '        ' + ForDraw.Interval2 +
+	           '     ' + ForDraw.VariableLoop[0] +
+	           ' ' + ForDraw.VariableLoop[1] +
+	           ' ' + ForDraw.VariableLoop[2]+'\n';
+    } else {
+	    pre += '      ' + ForDraw.DLoop[4] + ' ' +
+	           ForDraw.DLoop[6] + ' ' +
+	           ForDraw.DArmComp[0] + ' ' +
+	           ForDraw.DArmComp[1] + ' ' +
+	           ForDraw.DArmComp[2] + ' ' +
+	           ForDraw.DArmComp[3] + '         ' +
+	           ForDraw.VariableLoop[3] + '\n';
+	    pre += '                 ' + ForDraw.Interval2 +
+	           '     ' + ForDraw.VariableLoop[0] +
+	           ' ' + ForDraw.VariableLoop[1] +
+	           ' ' + ForDraw.VariableLoop[2]+'\n';
+    }
+    for (let i = 0; i < ForDraw.AnticodonArm.length; i++) {
+        pre += '                  ' + ForDraw.AnticodonArm[i] +
+               ' ' + linker.AnticodonArmLink[i] + ' ' +
+               ForDraw.AnticodonArmComp[ForDraw.AnticodonArm.length-1-i]+'\n';
+    }
+    pre += '                ' + ForDraw.AnticodonLoop[0] + '       ' + ForDraw.AnticodonLoop[6]+'\n';
+    pre += '                ' + ForDraw.AnticodonLoop[1] + '       ' + ForDraw.AnticodonLoop[5]+'\n';
+    pre += '                  ' + ForDraw.AnticodonLoop[2] +
+           ' ' + ForDraw.AnticodonLoop[3] + ' ' + ForDraw.AnticodonLoop[4];
+    $('#'+preId).text(pre);
+}
+
+function tRNA_primer(std_q) {
+  var PBS = reverseAB(std_q, std_q.length-1, std_q.length-PBS_len-1);
+  var Primerseq = complementSeq(PBS);
+  var temp_seq = '',
+      Type_RT = $('input[name="rev"]:checked').val();
+  if (Type_RT === 'MMLV') {
+    temp_seq = 'GGCUCGUUGGUCUAGGGGUAUGAUUCUCGCUUAGGGUGCGAGAGGUCCCGGGUUCAAAUCCCGGACGAGCCCCCA';
+  } else if (Type_RT === 'HIV1') {
+    temp_seq = 'GCCCGGCUAGCUCAGUCGGUAGAGCAUCAGACUUUUAAUCUGAGGGUCCAGGGTUCAAGUCCCUGUUCGGGCGCCA';
+  } else if (Type_RT === 'RSV') {
+    temp_seq = 'GACCUCGUGGCGCAACGGUAGCGCGUCUGACUCCAGAUCAGAAGGCUGCGUGUUCGAAUCACGUCGGGGUCACCA';
+  }
+  var temp = findRegion( temp_seq.replace('T','U'), temp_seq.length );
+  if (temp) {
+    // tRNA_Pro for MMLV RT, tRNA_Lys for HIV-1 RT, tRNA_Trp for RSV RT
+    $('#table_result').html('<tr><th>For ' + Type_RT + ' RT<br/>template tRNA ' +
+    	                    '(Tm<sup>stem</sup> <span id="TmT"></span>)</th><th>Your tRNA ' +
+    	                    '(Tm<sup>stem</sup> <span id="TmY"></span>)</th></tr>' +
+                            '<tr><td><pre id="preLeft"></pre></td><td><pre id="preRight"></pre></td></tr>');
+    draw_tRNA(temp, Type_RT, 'preLeft');
+    $('#TmT').text( TmCal67(temp.AcceptArm) );
+    var qT = temp;
+    qT.Redundance = reverseAB(Primerseq, qT.Redundance.length-1, -1);
+    qT.AcceptArmComp = reverseAB(Primerseq,
+                                 qT.Redundance.length+qT.AcceptArmComp.length-1, qT.Redundance.length-1);
+    qT.AcceptArm = anti_parallel(qT.AcceptArmComp);
+    qT.TArmComp = reverseAB(Primerseq.substr(qT.Redundance.length+qT.AcceptArmComp.length, 5), 4, -1);
+    qT.TArm = anti_parallel(qT.TArmComp);
+    var remainNotR = Primerseq.substr(qT.TArmComp.length+qT.Redundance.length+qT.AcceptArmComp.length);
+    qT.TLoop = qT.TLoop.substr(0, qT.TLoop.length-remainNotR.length) + reverseAB(remainNotR, remainNotR.length-1, -1);
+    draw_tRNA(qT, Type_RT, 'preRight');
+    $('#TmY').text( TmCal67(qT.AcceptArm) );
+    return complementSeq_dna( qT.AcceptArm + qT.Interval1 + qT.DArm + qT.DArmComp + qT.Interval2 +
+                              qT.AnticodonArm + qT.AnticodonLoop + qT.VariableLoop + qT.TArm +
+                              qT.TLoop + qT.TArmComp + qT.AcceptArmComp + qT.Redundance );
+  } else {
+    return 'ERROR'
+  }
+}
+
+function clean_results() {
+  $('#progress').text('');
+  $('#table_result').html('');
+  $('#graph_result').html('');
+  $('#primer_seq').text('');
+  $('#p_primer').addClass('Off');
+}
+
+
+$(document).ready(function () {
+  $('#submit').on('click', function (event) {
+    clean_results();
+    var q = $('#target_seq').val();
+    if (q) {
+      std_q = q.replace(/[^atgc]/gi, '').toUpperCase();
+      DEBUG && $('#progress').text('Input: ' + std_q);
+      if (std_q && std_q.length >= PBS_len) {
+        //$('#primer_seq').text(tRNA_primer( std_q ));
+        var targetprimer = tRNA_primer(std_q);
+        $('#primer_seq').html(targetprimer.substr(0,targetprimer.length-PBS_len)+
+          '<span style="color:blue">'+targetprimer.substr(targetprimer.length-PBS_len,PBS_len)+'</span>');
+        $('#p_primer').removeClass('Off');
+        DEBUG || $('#progress').addClass('Off');
+      } else {
+        $('#progress').text('!! the sequence should be longer');
+        $('#target_seq').focus();
+      }
+    } else {
+      $('#progress').text('!! please input something');
+      $('#target_seq').focus();
+    }
+    event.preventDefault();
+  });
+
+  var r = getQueryStringArgs();
+  if (r.seq) {
+    var q = r.seq;
+    $('#target_seq').val(r.seq);
+    std_q = t.replace(/[^atgc]/gi, '').toUpperCase();
+    //plus_strand_search(s, std_q);
+  }
+
+  $('#clear').on('click', function (event) {
+    clean_results();
+    $('#target_seq').val('');
+    $('#rev_MMLV').prop('checked', true);
+    PBS_len = 18;
+    $('#target_seq').focus();
+    event.preventDefault();
+  });
+
+  $('#demo').on('click', function (event) {
+    clean_results();
+    var q = 'CGATGATCGATCAGCTAGCTAGTCGATCGATCGATC';
+    $('#target_seq').val(q);
+    //$('#primer_seq').text(tRNA_primer( q ));
+    var demoprimer = tRNA_primer(q);
+    $('#primer_seq').html(demoprimer.substr(0,demoprimer.length-PBS_len)+
+      '<span style="color:blue">'+demoprimer.substr(demoprimer.length-PBS_len,PBS_len)+'</span>');
+    $('#p_primer').removeClass('Off');
+    DEBUG || $('#progress').addClass('Off');
+    event.preventDefault();
+  });
+
+  $('input[name="rev"]').on('change', function () {
+    if (this.checked) {
+      clean_results();
+      if (this.value === 'MMLV') {
+        DEBUG && $('#progress').text('MMLV');
+        PBS_len = 18;
+      } else if (this.value === 'HIV1') {
+        DEBUG && $('#progress').text('HIV1');
+        PBS_len = 18;
+      } else if (this.value === 'RSV') {
+        DEBUG && $('#progress').text('RSV');
+        PBS_len = 17;
+      } else {
+        $('#progress').text('This type of reverse transcriptase is not supported.');
+      }
+    }
+  });
+});
+  </script>
+</body>
+</html>
